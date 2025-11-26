@@ -1,0 +1,5 @@
+{
+  "name": "GeoStruct 3D: Estructuras de Malla",
+  "description": "Visualizador educativo interactivo para estructuras de datos de mallas 3D: Sopa de Triángulos, Indexado, Arista Alada y Media Arista.",
+  "requestFramePermissions": []
+}
