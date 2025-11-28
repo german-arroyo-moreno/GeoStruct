@@ -230,24 +230,26 @@ export const Viewer3D: React.FC<ViewerProps> = ({ meshData, hoverState, mode }) 
   }, [meshData]);
 
   return (
-    <div className="w-full h-full relative bg-gradient-to-br from-gray-900 to-slate-900">
+    // Updated background to a radial gradient for better depth and contrast
+    <div className="w-full h-full relative bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-gray-900 via-[#050b14] to-black">
       <Canvas>
         <PerspectiveCamera makeDefault position={[3, 2, 4]} />
         <OrbitControls enableDamping dampingFactor={0.1} />
         
-        <ambientLight intensity={0.5} />
-        <pointLight position={[10, 10, 10]} intensity={1} />
-        <pointLight position={[-10, -10, -10]} intensity={0.5} />
+        <ambientLight intensity={0.7} />
+        <pointLight position={[10, 10, 10]} intensity={1.5} />
+        <pointLight position={[-10, -10, -10]} intensity={0.8} />
 
         <group>
           {/* Main Mesh - Wireframe + Transparent Surface */}
           <mesh geometry={geometry}>
              <meshStandardMaterial 
-                color="#6366f1" 
-                roughness={0.5} 
-                metalness={0.8}
+                color="#312e81" // Dark indigo
+                emissive="#1e1b4b" // Slight emissive glow
+                roughness={0.2} 
+                metalness={0.9}
                 transparent 
-                opacity={0.1} 
+                opacity={0.15} 
                 side={THREE.DoubleSide}
                 polygonOffset
                 polygonOffsetFactor={1}
@@ -255,7 +257,8 @@ export const Viewer3D: React.FC<ViewerProps> = ({ meshData, hoverState, mode }) 
              />
           </mesh>
           <mesh geometry={geometry}>
-            <meshBasicMaterial color="#334155" wireframe />
+            {/* Brighter wireframe color (Light Indigo/Blue) for high contrast */}
+            <meshBasicMaterial color="#818cf8" wireframe />
           </mesh>
 
           {/* Interactive Highlights */}
