@@ -17,7 +17,8 @@ const SingleFaceHighlight: React.FC<{
   faceId: number; 
   color: string;
   opacity?: number;
-}> = ({ meshData, faceId, color, opacity = 0.4 }) => {
+  scale?: number;
+}> = ({ meshData, faceId, color, opacity = 0.4, scale = 1.02 }) => {
   const f = meshData.faces.find(f => f.id === faceId);
   if (!f) return null;
 
@@ -33,8 +34,7 @@ const SingleFaceHighlight: React.FC<{
   ]);
   geometry.setAttribute('position', new THREE.BufferAttribute(vertices, 3));
   geometry.setIndex([0, 1, 2]);
-  // Slightly scale up to avoid z-fighting
-  geometry.scale(1.02, 1.02, 1.02);
+  geometry.scale(scale, scale, scale);
 
   return (
     <mesh geometry={geometry}>
@@ -106,7 +106,12 @@ const MeshHighlight: React.FC<{ meshData: ProcessedMesh; hoverState: HoverState 
 
   // Highlight Face (Indexed Mode or HalfEdge Face reference)
   if (hoverState.type === 'face' && mode !== 'soup') {
-    return <SingleFaceHighlight meshData={meshData} faceId={hoverState.id} color="#ec4899" />;
+    return (
+      <group>
+        <SingleFaceHighlight meshData={meshData} faceId={hoverState.id} color="#ec4899" opacity={0.6} scale={1.03} />
+        <SingleFaceHighlight meshData={meshData} faceId={hoverState.id} color="#ffffff" opacity={0.2} scale={1.01} />
+      </group>
+    );
   }
 
   // Highlight Edge (Winged) or HalfEdge
@@ -212,6 +217,8 @@ const IndicesLabels: React.FC<{ meshData: ProcessedMesh, mode: StructureMode }> 
 export const Viewer3D: React.FC<ViewerProps> = ({ meshData, hoverState, mode }) => {
   // Reconstruct standard geometry for the base mesh
   const geometry = useMemo(() => {
+    // If we are in the middle of construction, meshData.faces might be partial.
+    // We only build geometry from the faces present in meshData.
     const geo = new THREE.BufferGeometry();
     const positions = new Float32Array(meshData.vertices.length * 3);
     meshData.vertices.forEach((v, i) => {

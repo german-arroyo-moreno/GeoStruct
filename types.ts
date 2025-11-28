@@ -54,6 +54,7 @@ export interface HalfEdgeData {
 // Winged Edge Structure
 export interface WingedEdgeData {
   id: number;
+  createdStep: number; // The face index during which this edge was created
   startVertex: number;
   endVertex: number;
   faceLeft: number;

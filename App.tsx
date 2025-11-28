@@ -1,10 +1,11 @@
-import React, { useState, useEffect, useRef } from 'react';
+
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import * as THREE from 'three';
 import { ShapeType, StructureMode, ProcessedMesh, HoverState } from './types';
 import { analyzeGeometry } from './utils/geometryUtils';
 import { Viewer3D } from './components/Viewer3D';
 import { InfoPanel } from './components/InfoPanel';
-import { Cuboid, Circle, Donut, Database, Code, GitBranch, Share2 } from 'lucide-react';
+import { Cuboid, Circle, Donut, Database, Code, GitBranch, Share2, Play, Pause, SkipForward, RotateCcw, StepForward } from 'lucide-react';
 
 const SHAPES: { id: ShapeType; label: string; icon: React.ReactNode }[] = [
   { id: 'cube', label: 'Cubo', icon: <Cuboid size={18} /> },
@@ -23,7 +24,14 @@ export default function App() {
   const [currentShape, setCurrentShape] = useState<ShapeType>('cube');
   const [currentMode, setCurrentMode] = useState<StructureMode>('indexed');
   const [hoverState, setHoverState] = useState<HoverState | null>(null);
-  const [meshData, setMeshData] = useState<ProcessedMesh | null>(null);
+  
+  // Full calculated mesh data
+  const [fullMeshData, setFullMeshData] = useState<ProcessedMesh | null>(null);
+
+  // Construction Mode State
+  const [isConstructionMode, setIsConstructionMode] = useState(false);
+  const [currentStep, setCurrentStep] = useState<number>(-1); // -1 means empty, 0 means first face, etc.
+  const [isPlaying, setIsPlaying] = useState(false);
 
   // Resize State
   const [leftWidth, setLeftWidth] = useState(256);
@@ -52,10 +60,109 @@ export default function App() {
     
     // Convert to non-indexed if simulating logic, but our util handles extraction
     const data = analyzeGeometry(geo);
-    setMeshData(data);
+    setFullMeshData(data);
+    
+    // Reset construction state when shape changes
+    setCurrentStep(-1);
+    setIsPlaying(false);
 
     return () => { geo.dispose(); }
   }, [currentShape]);
+
+  // Handle Playback
+  useEffect(() => {
+    let interval: number;
+    if (isPlaying && fullMeshData) {
+      interval = window.setInterval(() => {
+        setCurrentStep(prev => {
+          if (prev >= fullMeshData.faces.length - 1) {
+            setIsPlaying(false);
+            return prev;
+          }
+          return prev + 1;
+        });
+      }, 500); // 500ms per step
+    }
+    return () => clearInterval(interval);
+  }, [isPlaying, fullMeshData]);
+
+  // Compute "Snapshot" of mesh data based on construction step
+  const activeMeshData = useMemo(() => {
+    if (!fullMeshData) return null;
+    if (!isConstructionMode) return fullMeshData;
+
+    // Slice data up to currentStep (which represents the index of the last added face)
+    // We treat 'step' as the face Index. So step 0 includes Face 0.
+
+    const slicedFaces = fullMeshData.faces.filter(f => f.id <= currentStep);
+    
+    // Determine which vertices have been "discovered" so far.
+    // Since vertices are added to the list in order of discovery by the geometry analyzer,
+    // we essentially just need to find the maximum vertex ID referenced by the visible faces
+    // and slice the vertex array up to that point.
+    let maxVertIndex = -1;
+    slicedFaces.forEach(f => {
+      maxVertIndex = Math.max(maxVertIndex, f.v1, f.v2, f.v3);
+    });
+
+    // If step is -1 (start), maxVertIndex is -1, so slice(0, 0) gives empty array.
+    const relevantVertices = fullMeshData.vertices.slice(0, maxVertIndex + 1);
+
+    const slicedVertices = relevantVertices.map(v => ({
+      ...v,
+      // Hide topological links to future items.
+      incidentEdge: (v.incidentEdge !== undefined && fullMeshData.edges && fullMeshData.edges[v.incidentEdge].createdStep <= currentStep) 
+        ? v.incidentEdge : undefined,
+      incidentHalfEdge: (v.incidentHalfEdge !== undefined && fullMeshData.halfEdges && fullMeshData.halfEdges[v.incidentHalfEdge].face <= currentStep)
+        ? v.incidentHalfEdge : undefined
+    }));
+
+    // Sliced Half Edges
+    // Include only those belonging to faces <= currentStep
+    const slicedHalfEdges = fullMeshData.halfEdges 
+      ? fullMeshData.halfEdges.filter(he => he.face <= currentStep).map(he => {
+          // If twin belongs to a future face, hide it
+          const twinIsVisible = he.twin !== null && fullMeshData.halfEdges![he.twin].face <= currentStep;
+          return {
+            ...he,
+            twin: twinIsVisible ? he.twin : null
+          };
+      }) 
+      : undefined;
+
+    // Sliced Winged Edges
+    const slicedEdges = fullMeshData.edges
+      ? fullMeshData.edges.filter(e => e.createdStep <= currentStep).map(e => {
+          // If right face is in future, hide it
+          const rightFaceVisible = e.faceRight !== -1 && e.faceRight <= currentStep;
+          
+          // Check neighbors visibility. 
+          // Note: In a real algorithm, preds/succs update dynamically. 
+          // Here we just check if the linked edge exists in our slice.
+          // Ideally, we'd check if the *face* causing that link has been processed, but simplify to edge existence.
+          const checkEdge = (id: number) => (id !== -1 && fullMeshData.edges![id].createdStep <= currentStep) ? id : -1;
+
+          return {
+            ...e,
+            faceRight: rightFaceVisible ? e.faceRight : -1,
+            predRight: rightFaceVisible ? checkEdge(e.predRight) : -1,
+            succRight: rightFaceVisible ? checkEdge(e.succRight) : -1,
+            // Left face is usually the creation face, so it's visible if edge is visible
+            predLeft: checkEdge(e.predLeft),
+            succLeft: checkEdge(e.succLeft)
+          }
+      })
+      : undefined;
+
+    return {
+      vertices: slicedVertices,
+      faces: slicedFaces,
+      soupTriangles: fullMeshData.soupTriangles?.slice(0, currentStep + 1), // Only if we supported soup construction
+      halfEdges: slicedHalfEdges,
+      edges: slicedEdges
+    };
+
+  }, [fullMeshData, isConstructionMode, currentStep]);
 
   // Resize Handlers
   useEffect(() => {
@@ -97,6 +204,21 @@ export default function App() {
     document.body.style.cursor = 'col-resize';
     document.body.style.userSelect = 'none';
   };
+
+  const toggleConstructionMode = () => {
+    const newMode = !isConstructionMode;
+    setIsConstructionMode(newMode);
+    setCurrentStep(newMode ? -1 : (fullMeshData?.faces.length || 0));
+    setIsPlaying(false);
+  };
+
+  const activeFaceHighlight = isConstructionMode && currentStep >= 0 
+    ? { type: 'face' as const, id: currentStep } 
+    : null;
+
+  // Merge hover state with active face highlight logic?
+  // Ideally, user hover overrides active face.
+  const visualHoverState = hoverState || activeFaceHighlight;
 
   return (
     <div className="flex h-screen w-full bg-slate-950 text-slate-100 font-sans overflow-hidden">
@@ -167,13 +289,76 @@ export default function App() {
             </div>
           </section>
 
+          {/* CONSTRUCTION MODE CONTROLS */}
+            <section className="p-4 bg-slate-800/80 rounded-lg border border-indigo-500/30 shadow-lg">
+              <div className="flex items-center justify-between mb-3">
+                 <h4 className="text-xs font-bold text-white flex items-center gap-2">
+                   <StepForward size={14} className="text-emerald-400"/> Construcción Paso a Paso
+                 </h4>
+                 <button 
+                    onClick={toggleConstructionMode}
+                    className={`w-8 h-4 rounded-full transition-colors relative ${isConstructionMode ? 'bg-emerald-500' : 'bg-slate-600'}`}
+                 >
+                    <div className={`absolute top-0.5 left-0.5 w-3 h-3 bg-white rounded-full transition-transform ${isConstructionMode ? 'translate-x-4' : ''}`} />
+                 </button>
+              </div>
+
+              {isConstructionMode && (
+                <div className="space-y-3 animate-in fade-in slide-in-from-top-2">
+                   <div className="flex justify-between items-center text-[10px] text-slate-400 font-mono">
+                      <span>Cara actual:</span>
+                      <span className="text-emerald-400 font-bold">
+                        {currentStep === -1 ? 'INICIO' : `#${currentStep}`}
+                      </span>
+                   </div>
+                   
+                   {/* Progress Bar */}
+                   <div className="w-full bg-slate-700 h-1.5 rounded-full overflow-hidden">
+                      <div 
+                        className="bg-emerald-500 h-full transition-all duration-300"
+                        style={{ width: fullMeshData ? `${((currentStep + 1) / fullMeshData.faces.length) * 100}%` : '0%' }}
+                      />
+                   </div>
+
+                   <div className="flex gap-2 justify-between mt-2">
+                      <button 
+                        onClick={() => { setCurrentStep(-1); setIsPlaying(false); }}
+                        className="p-2 bg-slate-700 hover:bg-slate-600 rounded text-slate-300"
+                        title="Reiniciar"
+                      >
+                        <RotateCcw size={14} />
+                      </button>
+                      
+                      <button 
+                        onClick={() => setIsPlaying(!isPlaying)}
+                        className={`flex-1 flex items-center justify-center gap-2 p-2 rounded font-bold text-xs transition-colors ${isPlaying ? 'bg-red-500/20 text-red-400 border border-red-500/50' : 'bg-emerald-500 text-slate-900 hover:bg-emerald-400'}`}
+                      >
+                         {isPlaying ? <Pause size={14} /> : <Play size={14} />}
+                         {isPlaying ? 'PAUSAR' : 'AUTO'}
+                      </button>
+
+                      <button 
+                        onClick={() => {
+                          setIsPlaying(false);
+                          setCurrentStep(prev => (fullMeshData && prev < fullMeshData.faces.length - 1) ? prev + 1 : prev);
+                        }}
+                        className="p-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded"
+                        title="Siguiente Paso"
+                      >
+                        <SkipForward size={14} />
+                      </button>
+                   </div>
+                </div>
+              )}
+            </section>
+
           <section className="p-4 bg-slate-800/50 rounded-lg border border-slate-700">
             <h4 className="text-xs font-bold text-slate-300 mb-2">Estadísticas</h4>
-            {meshData && (
+            {activeMeshData && (
                <div className="space-y-1 text-xs text-slate-400 font-mono">
-                 <div className="flex justify-between"><span>Vértices:</span> <span className="text-white">{meshData.vertices.length}</span></div>
-                 <div className="flex justify-between"><span>Caras:</span> <span className="text-white">{meshData.faces.length}</span></div>
-                 <div className="flex justify-between"><span>Aristas (aprox):</span> <span className="text-white">{meshData.edges?.length || '-'}</span></div>
+                 <div className="flex justify-between"><span>Vértices:</span> <span className="text-white">{activeMeshData.vertices.length}</span></div>
+                 <div className="flex justify-between"><span>Caras:</span> <span className="text-white">{activeMeshData.faces.length}</span></div>
+                 <div className="flex justify-between"><span>Aristas (aprox):</span> <span className="text-white">{activeMeshData.edges?.length || activeMeshData.halfEdges?.length || '-'}</span></div>
                </div>
             )}
           </section>
@@ -195,10 +380,10 @@ export default function App() {
         className="flex-1 relative cursor-crosshair min-w-0"
         onMouseEnter={() => setHoverState(null)}
       >
-        {meshData && (
+        {activeMeshData && (
           <Viewer3D 
-            meshData={meshData} 
-            hoverState={hoverState} 
+            meshData={activeMeshData} 
+            hoverState={visualHoverState} 
             mode={currentMode}
           />
         )}
@@ -206,13 +391,17 @@ export default function App() {
         {/* Overlay Instructions */}
         <div className="absolute top-4 right-4 bg-black/60 backdrop-blur text-white p-3 rounded-lg border border-white/10 max-w-xs pointer-events-none">
           <p className="text-xs">
-            <span className="text-pink-400 font-bold">Interacción:</span> Mueve el ratón sobre las tablas de la derecha para iluminar los componentes (Vértices, Aristas, Caras) en el modelo 3D.
+            {isConstructionMode ? (
+               <span className="text-emerald-400 font-bold animate-pulse">Modo Construcción Activo</span>
+            ) : (
+               <span><span className="text-pink-400 font-bold">Interacción:</span> Mueve el ratón sobre las tablas de la derecha para iluminar los componentes.</span>
+            )}
           </p>
         </div>
       </div>
 
       {/* RIGHT SIDEBAR: DATA TABLES */}
-      {meshData && (
+      {activeMeshData && (
         <>
            {/* RIGHT RESIZER */}
           <div 
@@ -225,10 +414,10 @@ export default function App() {
             className="flex-shrink-0 bg-slate-900 border-l border-slate-800"
           >
             <InfoPanel 
-              meshData={meshData} 
+              meshData={activeMeshData} 
               mode={currentMode} 
               onHover={setHoverState}
-              hoverState={hoverState} // PASSING HOVER STATE DOWN
+              hoverState={visualHoverState} // PASSING HOVER STATE DOWN
             />
           </div>
         </>

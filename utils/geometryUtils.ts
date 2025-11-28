@@ -176,6 +176,7 @@ export const analyzeGeometry = (geometry: THREE.BufferGeometry): ProcessedMesh =
       
       wingedEdges.push({
         id: weId,
+        createdStep: he.face, // Track creation step
         startVertex: isCanonical ? he.origin : he.target,
         endVertex: isCanonical ? he.target : he.origin,
         faceLeft: -1,  // To be filled
